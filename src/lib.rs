@@ -1,15 +1,9 @@
-/*!
-A platform agnostic Rust friver for the drv2605, based on the
-[`embedded-hal`] traits.
-*/
-#![no_std]
-extern crate embedded_hal as hal;
-#[macro_use]
-extern crate bitfield;
+#![cfg_attr(not(test), no_std)]
 
-use hal::blocking::i2c::{Write, WriteRead};
+use bitfield::bitfield;
+use embedded_hal_async::i2c::I2c;
 
-bitfield!{
+bitfield! {
     pub struct StatusReg(u8);
     impl Debug;
     /// Latching overcurrent detection flag.  If the load impedance is below
@@ -100,7 +94,7 @@ impl From<u8> for Mode {
     }
 }
 
-bitfield!{
+bitfield! {
     pub struct ModeReg(u8);
     impl Debug;
     /// Device reset. Setting this bit performs the equivalent operation of power
@@ -146,7 +140,7 @@ impl From<u8> for LibrarySelection {
     }
 }
 
-bitfield!{
+bitfield! {
     pub struct RegisterThree(u8);
     impl Debug;
     /// This bit sets the output driver into a true high-impedance state. The device
@@ -413,7 +407,7 @@ pub enum Effect {
     SmoothHumFive10 = 123,
 }
 
-bitfield!{
+bitfield! {
     pub struct WaveformReg(u8);
     impl Debug;
     /// When this bit is set, the WAV_FRM_SEQ[6:0] bit is interpreted as a wait
@@ -463,7 +457,7 @@ impl WaveformReg {
     }
 }
 
-bitfield!{
+bitfield! {
     pub struct GoReg(u8);
     impl Debug;
     /// This bit is used to fire processes in the DRV2605 device. The process
@@ -479,7 +473,7 @@ bitfield!{
     pub go, set_go: 0;
 }
 
-bitfield!{
+bitfield! {
     pub struct FeedbackControlReg(u8);
     impl Debug;
 
@@ -534,7 +528,7 @@ bitfield!{
     pub bemf_gain, set_bemf_gain: 1, 0;
 }
 
-bitfield!{
+bitfield! {
     pub struct Control1Reg(u8);
     impl Debug;
     /// This bit applies higher loop gain during overdrive to enhance actuator transient response.
@@ -558,7 +552,7 @@ bitfield!{
     pub drive_time, set_drive_time: 4, 0;
 }
 
-bitfield!{
+bitfield! {
     pub struct Control2Reg(u8);
     impl Debug;
     /// The BIDIR_INPUT bit selects how the engine interprets data.
@@ -606,7 +600,7 @@ bitfield!{
     pub idiss_time, set_idiss_time: 1, 0;
 }
 
-bitfield!{
+bitfield! {
     pub struct Control3Reg(u8);
     impl Debug;
 
@@ -660,7 +654,7 @@ bitfield!{
     pub lra_open_loop, set_lra_open_loop: 0;
 }
 
-bitfield!{
+bitfield! {
     pub struct Control4Reg(u8);
     impl Debug;
 
@@ -767,23 +761,23 @@ pub const ADDRESS: u8 = 0x5a;
 
 pub struct Drv2605<I2C>
 where
-    I2C: WriteRead + Write,
+    I2C: I2c,
 {
     i2c: I2C,
 }
 
 impl<I2C, E> Drv2605<I2C>
 where
-    I2C: WriteRead<Error = E> + Write<Error = E>,
+    I2C: I2c<Error = E>,
 {
     /// Construct a driver instance, but don't do any initialization
     pub fn new(i2c: I2C) -> Self {
         Self { i2c }
     }
 
-    pub fn init_open_loop_erm(&mut self) -> Result<(), E> {
-        self.set_standby(false)?;
-        self.set_realtime_playback_input(0)?;
+    pub async fn init_open_loop_erm(&mut self) -> Result<(), E> {
+        self.set_standby(false).await?;
+        self.set_realtime_playback_input(0).await?;
         self.set_waveform(&[
             WaveformReg::new_effect(Effect::StrongClick100),
             WaveformReg::new_stop(),
@@ -793,52 +787,54 @@ where
             WaveformReg::new_stop(),
             WaveformReg::new_stop(),
             WaveformReg::new_stop(),
-        ])?;
+        ]).await?;
 
-        let mut feedback = FeedbackControlReg(self.read(Register::FeedbackControl)?);
+        let mut feedback = FeedbackControlReg(self.read(Register::FeedbackControl).await?);
         feedback.set_n_erm_lra(false);
-        self.write(Register::FeedbackControl, feedback.0)?;
+        self.write(Register::FeedbackControl, feedback.0).await?;
 
-        let mut control3 = Control3Reg(self.read(Register::Control3)?);
+        let mut control3 = Control3Reg(self.read(Register::Control3).await?);
         control3.set_erm_open_loop(true);
-        self.write(Register::Control3, control3.0)?;
+        self.write(Register::Control3, control3.0).await?;
         Ok(())
     }
 
     /// Write `value` to `register`
-    fn write(&mut self, register: Register, value: u8) -> Result<(), E> {
-        self.i2c.write(ADDRESS, &[register as u8, value])
+    async fn write(&mut self, register: Register, value: u8) -> Result<(), E> {
+        self.i2c.write(ADDRESS, &[register as u8, value]).await
     }
 
     /// Read an 8-bit value from the register
-    fn read(&mut self, register: Register) -> Result<u8, E> {
+    async fn read(&mut self, register: Register) -> Result<u8, E> {
         let mut buf = [0u8; 1];
-        self.i2c.write_read(ADDRESS, &[register as u8], &mut buf)?;
+        self.i2c
+            .write_read(ADDRESS, &[register as u8], &mut buf)
+            .await?;
         Ok(buf[0])
     }
 
-    pub fn get_status(&mut self) -> Result<StatusReg, E> {
-        self.read(Register::Status).map(StatusReg)
+    pub async fn get_status(&mut self) -> Result<StatusReg, E> {
+        self.read(Register::Status).await.map(StatusReg)
     }
 
-    pub fn get_mode(&mut self) -> Result<ModeReg, E> {
-        self.read(Register::Mode).map(ModeReg)
+    pub async fn get_mode(&mut self) -> Result<ModeReg, E> {
+        self.read(Register::Mode).await.map(ModeReg)
     }
 
     /// performs the equivalent operation of power
     /// cycling the device. Any playback operations are immediately interrupted,
     /// and all registers are reset to the default values.
-    pub fn reset(&mut self) -> Result<(), E> {
+    pub async fn reset(&mut self) -> Result<(), E> {
         let mut mode = ModeReg(0);
         mode.set_dev_reset(true);
-        self.write(Register::Mode, mode.0)
+        self.write(Register::Mode, mode.0).await
     }
 
     /// Put the device into standby mode, or wake it up from standby
-    pub fn set_standby(&mut self, standby: bool) -> Result<(), E> {
-        let mut mode = ModeReg(self.read(Register::Mode)?);
+    pub async fn set_standby(&mut self, standby: bool) -> Result<(), E> {
+        let mut mode = ModeReg(self.read(Register::Mode).await?);
         mode.set_standby(standby);
-        self.write(Register::Mode, mode.0)
+        self.write(Register::Mode, mode.0).await
     }
 
     /// This field is the entry point for real-time playback (RTP) data. The DRV2605
@@ -849,8 +845,9 @@ where
     /// unsigned by the DATA_FORMAT_RTP bit in register 0x1D. When the
     /// haptic waveform is complete, the user can idle the device by setting
     /// MODE[2:0] = 0, or alternatively by setting STANDBY = 1.
-    pub fn set_realtime_playback_input(&mut self, value: i8) -> Result<(), E> {
+    pub async fn set_realtime_playback_input(&mut self, value: i8) -> Result<(), E> {
         self.write(Register::RealTimePlaybackInput, value as u8)
+            .await
     }
 
     /// This bit sets the output driver into a true high-impedance state. The device
@@ -858,21 +855,21 @@ where
     /// shutdown or standby mode, the output drivers have 15 kΩ to ground. When
     /// the HI_Z bit is asserted, the hi-Z functionality takes effect immediately, even
     /// if a transaction is taking place.
-    pub fn set_high_impedance_state(&mut self, value: bool) -> Result<(), E> {
-        let mut register = RegisterThree(self.read(Register::Register3)?);
+    pub async fn set_high_impedance_state(&mut self, value: bool) -> Result<(), E> {
+        let mut register = RegisterThree(self.read(Register::Register3).await?);
         register.set_hi_z(value);
-        self.write(Register::Register3, register.0)
+        self.write(Register::Register3, register.0).await
     }
 
     /// Selects the library the playback engine selects when the GO bit is set.
-    pub fn set_library(&mut self, value: LibrarySelection) -> Result<(), E> {
-        let mut register = RegisterThree(self.read(Register::Register3)?);
+    pub async fn set_library(&mut self, value: LibrarySelection) -> Result<(), E> {
+        let mut register = RegisterThree(self.read(Register::Register3).await?);
         register.set_library_selection(value as u8);
-        self.write(Register::Register3, register.0)
+        self.write(Register::Register3, register.0).await
     }
 
     /// Sets the waveform generation registers to the shape provided
-    pub fn set_waveform(&mut self, waveform: &[WaveformReg; 8]) -> Result<(), E> {
+    pub async fn set_waveform(&mut self, waveform: &[WaveformReg; 8]) -> Result<(), E> {
         let buf: [u8; 9] = [
             Register::WaveformSequence0 as u8,
             waveform[0].0,
@@ -884,16 +881,16 @@ where
             waveform[6].0,
             waveform[7].0,
         ];
-        self.i2c.write(ADDRESS, &buf)
+        self.i2c.write(ADDRESS, &buf).await
     }
 
-    pub fn set_single_effect(&mut self, effect: Effect) -> Result<(), E> {
+    pub async fn set_single_effect(&mut self, effect: Effect) -> Result<(), E> {
         let buf: [u8; 3] = [
             Register::WaveformSequence0 as u8,
             WaveformReg::new_effect(effect).0,
             WaveformReg::new_stop().0,
         ];
-        self.i2c.write(ADDRESS, &buf)
+        self.i2c.write(ADDRESS, &buf).await
     }
 
     /// This bit is used to fire processes in the DRV2605 device. The process
@@ -906,10 +903,10 @@ where
     /// waveform sequence. Using one of the external trigger modes can cause
     /// the GO bit to be set or cleared by the external trigger pin. This bit can also
     /// be used to fire the auto-calibration process or the diagnostic process.
-    pub fn set_go(&mut self, go: bool) -> Result<(), E> {
-        let mut register = GoReg(self.read(Register::Go)?);
+    pub async fn set_go(&mut self, go: bool) -> Result<(), E> {
+        let mut register = GoReg(self.read(Register::Go).await?);
         register.set_go(go);
-        self.write(Register::Go, register.0)
+        self.write(Register::Go, register.0).await
     }
 
     /// This bit adds a time offset to the overdrive portion of the library
@@ -922,8 +919,8 @@ where
     /// positive or negative.
     /// Overdrive Time Offset (ms) = ODT[7:0] × PLAYBACK_INTERVAL
     /// See the section for PLAYBACK_INTERVAL details.
-    pub fn set_overdrive_time_offset(&mut self, value: i8) -> Result<(), E> {
-        self.write(Register::OverdriveTimeOffset, value as u8)
+    pub async fn set_overdrive_time_offset(&mut self, value: i8) -> Result<(), E> {
+        self.write(Register::OverdriveTimeOffset, value as u8).await
     }
 
     /// This bit adds a time offset to the positive sustain portion of the library
@@ -934,8 +931,9 @@ where
     /// interpreted as 2s complement, so the time offset can positive or negative.
     /// Sustain-Time Positive Offset (ms) = SPT[7:0] × PLAYBACK_INTERVAL
     /// See the section for PLAYBACK_INTERVAL details.
-    pub fn set_sustain_time_offset_positive(&mut self, value: i8) -> Result<(), E> {
+    pub async fn set_sustain_time_offset_positive(&mut self, value: i8) -> Result<(), E> {
         self.write(Register::SustainTimeOffsetPositive, value as u8)
+            .await
     }
 
     /// This bit adds a time offset to the negative sustain portion of the library
@@ -947,8 +945,9 @@ where
     /// negative.
     /// Sustain-Time Negative Offset (ms) = SNT[7:0] × PLAYBACK_INTERVAL
     /// See the section for PLAYBACK_INTERVAL details.
-    pub fn set_sustain_time_offset_negative(&mut self, value: i8) -> Result<(), E> {
+    pub async fn set_sustain_time_offset_negative(&mut self, value: i8) -> Result<(), E> {
         self.write(Register::SustainTimeOffsetNegative, value as u8)
+            .await
     }
 
     /// This bit adds a time offset to the braking portion of the library waveforms.
@@ -960,7 +959,7 @@ where
     /// 2s complement, so the time offset can be positive or negative.
     /// Brake Time Offset (ms) = BRT[7:0] × PLAYBACK_INTERVAL
     /// See the section for PLAYBACK_INTERVAL details.
-    pub fn set_brake_time_offset(&mut self, value: i8) -> Result<(), E> {
-        self.write(Register::BrakeTimeOffset, value as u8)
+    pub async fn set_brake_time_offset(&mut self, value: i8) -> Result<(), E> {
+        self.write(Register::BrakeTimeOffset, value as u8).await
     }
 }
