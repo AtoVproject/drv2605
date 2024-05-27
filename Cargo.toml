@@ -1,13 +1,13 @@
 [package]
-name = "drv2605"
+name = "drv2605-async"
 version = "0.1.0"
-authors = ["Wez Furlong"]
+authors = ["Wez Furlong", "Chris Maniewski"]
 keywords = ["embedded-hal-driver"]
 categories = ["embedded", "no-std", "hardware-support", "haptic"]
-description = "A platform agnostic driver for the drv2605 haptic driver"
+description = "An async rust-embedded driver for the Texas Instruments DRV2605 haptic driver"
 license = "MIT OR Apache-2.0"
 readme = "README.md"
-repository = "https://github.com/wez/drv2605"
+repository = "https://github.com/AtovProject/drv2605-async"
 
 [dependencies]
 embedded-hal = "~0.2"
