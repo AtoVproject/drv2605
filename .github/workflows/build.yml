@@ -12,8 +12,8 @@ jobs:
     - uses: actions/checkout@v4
     - name: Install Rust toolchain
       uses: dtolnay/rust-toolchain@stable
-    - name: Run Clippy
-      run: cargo clippy --all-targets --all-features
+    - name: Formatting & Lints
+      run: cargo fmt -- --check && cargo clippy -- -D warnings
     - name: Build
       run: cargo build --verbose
     - name: Run tests
